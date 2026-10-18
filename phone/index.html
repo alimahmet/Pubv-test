@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PBUV phone measurement</title>
+<style>
+:root { color-scheme: light dark; --bg:#ffffff; --fg:#111111; --muted:#666666; --card:#f3f4f6; --accent:#2563eb; --bad:#dc2626; }
+@media (prefers-color-scheme: dark) { :root { --bg:#111111; --fg:#eeeeee; --muted:#aaaaaa; --card:#1f2937; --accent:#60a5fa; --bad:#f87171; } }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 -apple-system, system-ui, sans-serif; }
+main { max-width:760px; margin:0 auto; padding:16px; }
+h1 { font-size:1.25rem; margin:4px 0 8px; }
+h2 { font-size:1rem; margin:20px 0 8px; }
+label { display:block; font-size:.85rem; color:var(--muted); margin-top:10px; }
+input { width:100%; box-sizing:border-box; padding:10px; font-size:16px; border-radius:8px; border:1px solid var(--muted); background:var(--bg); color:var(--fg); }
+.row { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-top:12px; }
+button { padding:12px; font-size:15px; border-radius:8px; border:0; background:var(--accent); color:#ffffff; }
+button.secondary { background:var(--card); color:var(--fg); }
+button:disabled { opacity:.5; }
+pre { background:var(--card); padding:12px; border-radius:8px; white-space:pre-wrap; word-break:break-all; font-size:12px; }
+.small { font-family:ui-monospace, monospace; font-size:12px; word-break:break-all; color:var(--muted); }
+#status { font-weight:600; }
+#status.bad { color:var(--bad); }
+textarea { width:100%; box-sizing:border-box; height:8em; font:12px ui-monospace, monospace; border-radius:8px; background:var(--card); color:var(--fg); border:0; padding:8px; }
+</style>
+</head>
+<body>
+<main>
+<h1>PBUV phone measurement</h1>
+<div class="small" id="env"></div>
+<div class="small" id="loadinfo">Loading wasm and data...</div>
+
+<label for="n">Nonce (from the verifier)</label>
+<input id="n" value="nonce-P">
+<label for="v">Verifier id</label>
+<input id="v" value="verifier.example">
+<label for="r">Request</label>
+<input id="r" value="age_over_18">
+<div class="small">ctx = base64url(SHA-256(JSON ["PBUV-v1", nonce, verifier, request])) = <span id="ctx"></span></div>
+
+<div class="row">
+  <button class="secondary" onclick="newNonce()">New random nonce</button>
+  <button class="secondary" onclick="reg()">Register passkey</button>
+</div>
+
+<div class="row">
+  <button id="once" onclick="once()" disabled>Face ID + prove + verify</button>
+  <button id="repeat" onclick="repeat()" disabled>Repeat prove + verify 20 times</button>
+</div>
+
+<div class="row">
+  <button class="secondary" onclick="copyProof()">Copy proof</button>
+  <button class="secondary" onclick="copyAssertion()">Copy assertion JSON</button>
+</div>
+
+<h2>Status</h2>
+<div id="status">Starting...</div>
+<pre id="o">Nothing yet.</pre>
+<textarea id="copybox" readonly hidden></textarea>
+</main>
+
+<script>
+const enc = new TextEncoder();
+const $ = id => document.getElementById(id);
+const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+const b64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const fromB64u = s => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
+const sha = async d => new Uint8Array(await crypto.subtle.digest('SHA-256', d));
+// unpadded base64url length to byte length
+const b64uBytes = s => Math.floor(s.length * 3 / 4);
+
+let worker = null, busy = false, loaded = false;
+let lastAssertion = null, lastProof = null, lastParams = null;
+
+function status(text, bad) { $('status').textContent = text; $('status').className = bad ? 'bad' : ''; }
+function show(text) { $('o').textContent = text; }
+function setBusy(b) { busy = b; $('once').disabled = b || !loaded; $('repeat').disabled = b || !loaded || !lastAssertion; }
+
+function stats(xs) {
+  const n = xs.length, m = xs.reduce((s, x) => s + x, 0) / n;
+  const sd = n > 1 ? Math.sqrt(xs.reduce((s, x) => s + (x - m) * (x - m), 0) / (n - 1)) : 0;
+  return `n=${n} mean=${m.toFixed(1)} sd=${sd.toFixed(1)} min=${Math.min(...xs).toFixed(1)} max=${Math.max(...xs).toFixed(1)}`;
+}
+
+// The worker is recreated after an error, because a panic inside wasm leaves the module unusable.
+function startWorker() {
+  loaded = false; setBusy(false);
+  worker = new Worker('./worker.js', { type: 'module' });
+  worker.onmessage = ev => onWorker(ev.data);
+  worker.onerror = ev => { status('Worker error: ' + (ev.message || 'unknown') + ' (the wasm module may have aborted; it is reloaded)', true); ev.preventDefault(); restart(); };
+  worker.postMessage({ cmd: 'load' });
+}
+function restart() { try { worker.terminate(); } catch (e) {} startWorker(); }
+
+function onWorker(m) {
+  if (m.type === 'loaded') {
+    loaded = true; setBusy(false);
+    $('loadinfo').textContent = `data: ${m.name}  |  wasm: ${m.wasmBytes} bytes`;
+    status('Ready.');
+  } else if (m.type === 'progress') {
+    status(m.text);
+  } else if (m.type === 'once') {
+    lastProof = m.proof; setBusy(false);
+    const res = { faceIdMs: +lastParams.faceIdMs.toFixed(1), proveMs: +m.proveMs.toFixed(1), verifyMs: +m.verifyMs.toFixed(1),
+                  proofBytes: b64uBytes(m.proof), verified: m.ok, result: m.result, uv: lastParams.uv, flags: lastParams.flags, nonce: lastParams.nonce };
+    status(m.ok ? 'Verified.' : 'Verify failed.', !m.ok);
+    show(JSON.stringify(res, null, 2));
+  } else if (m.type === 'repeat') {
+    setBusy(false);
+    const ok = m.runs.filter(r => r.ok).length;
+    status(`Done: verified ${ok} of ${m.runs.length}.`, ok !== m.runs.length);
+    show([`== PBUV in the browser, N=${m.runs.length} ==`,
+          'prove ms:    ' + stats(m.runs.map(r => r.proveMs)),
+          'verify ms:   ' + stats(m.runs.map(r => r.verifyMs)),
+          'proof bytes: ' + stats(m.runs.map(r => r.bytes)),
+          `verify succeeded: ${ok} of ${m.runs.length}`,
+          '', navigator.userAgent].join('\n'));
+  } else if (m.type === 'error') {
+    status('Error: ' + m.text, true); setBusy(false);
+    restart();
+  }
+}
+
+async function ctxBytes() {
+  return sha(enc.encode(JSON.stringify(["PBUV-v1", $('n').value, $('v').value, $('r').value])));
+}
+async function showCtx() { $('ctx').textContent = b64u(await ctxBytes()); }
+['n', 'v', 'r'].forEach(id => $(id).addEventListener('input', showCtx));
+function newNonce() { $('n').value = b64u(crypto.getRandomValues(new Uint8Array(16))); showCtx(); }
+
+function derToRaw(der) {
+  let i = 2; if (der[1] & 0x80) i += der[1] & 0x7f;
+  const rl = der[i + 1]; const r = der.slice(i + 2, i + 2 + rl); i = i + 2 + rl;
+  const sl = der[i + 1]; const s = der.slice(i + 2, i + 2 + sl);
+  const fix = x => { x = x[0] === 0 ? x.slice(1) : x; const o = new Uint8Array(32); o.set(x, 32 - x.length); return o; };
+  return [fix(r), fix(s)];
+}
+function storedCredId() { try { return localStorage.getItem('pbuv_cred'); } catch (e) { return null; } }
+
+async function reg() {
+  try {
+    const c = await navigator.credentials.create({ publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rp: { name: 'PBUV test', id: location.hostname },
+      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'askar', displayName: 'Askar' },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+      attestation: 'none'
+    }});
+    const xy = new Uint8Array(c.response.getPublicKey()).slice(-64);
+    const out = { kind: 'registration', credId: b64u(c.rawId), pub_x: hex(xy.slice(0, 32)), pub_y: hex(xy.slice(32)), origin: location.origin };
+    try { localStorage.setItem('pbuv_cred', out.credId); } catch (e) {}
+    status('Registered. Issue a credential for this key (PBUV.md), export it, and reload.');
+    show(JSON.stringify(out, null, 2));
+  } catch (e) { status('Error: ' + e.name + ': ' + e.message, true); }
+}
+
+async function once() {
+  if (busy) return;
+  setBusy(true);
+  try {
+    status('Waiting for Face ID / Touch ID...');
+    const id = storedCredId();
+    const t0 = performance.now();
+    const a = await navigator.credentials.get({ publicKey: {
+      challenge: await ctxBytes(), rpId: location.hostname, userVerification: 'required',
+      allowCredentials: id ? [{ type: 'public-key', id: fromB64u(id) }] : []
+    }});
+    const faceIdMs = performance.now() - t0;
+    const ad = new Uint8Array(a.response.authenticatorData);
+    const cd = new Uint8Array(a.response.clientDataJSON);
+    const [r, s] = derToRaw(new Uint8Array(a.response.signature));
+    lastAssertion = JSON.stringify({ authData: hex(ad), clientDataJSON: new TextDecoder().decode(cd), r: hex(r), s: hex(s),
+                                     meta: { nonce: $('n').value, verifier: $('v').value, request: $('r').value, credId: b64u(a.rawId), origin: location.origin } });
+    lastParams = { nonce: $('n').value, verifier: $('v').value, request: $('r').value, rpId: location.hostname, origin: location.origin,
+                   faceIdMs, uv: !!(ad[32] & 4), flags: '0x' + ad[32].toString(16).padStart(2, '0') };
+    status(`Face ID done in ${faceIdMs.toFixed(0)} ms. Proving...`);
+    worker.postMessage({ cmd: 'once', assertion: lastAssertion, params: lastParams });
+  } catch (e) {
+    status('Error: ' + e.name + ': ' + e.message, true); setBusy(false);
+  }
+}
+
+function repeat() {
+  if (busy || !lastAssertion) return;
+  setBusy(true);
+  status('Starting 20 runs...');
+  worker.postMessage({ cmd: 'repeat', n: 20, assertion: lastAssertion, params: lastParams });
+}
+
+// iOS may refuse the clipboard; then the text is put in a box to select and copy by hand
+async function copy(text, what) {
+  if (!text) { status('Nothing to copy yet: run Face ID + prove + verify first.', true); return; }
+  try { await navigator.clipboard.writeText(text); status(what + ' copied (' + text.length + ' characters).'); $('copybox').hidden = true; }
+  catch (e) { $('copybox').value = text; $('copybox').hidden = false; $('copybox').select(); status('Clipboard refused; select the text in the box and copy it.', true); }
+}
+function copyProof() { copy(lastProof, 'Proof'); }
+function copyAssertion() { copy(lastAssertion, 'Assertion JSON'); }
+
+$('env').textContent = 'origin: ' + location.origin + '  |  rpId: ' + location.hostname + (window.isSecureContext ? '' : '  |  NOT a secure context, WebAuthn will fail');
+showCtx();
+startWorker();
+</script>
+</body>
+</html>

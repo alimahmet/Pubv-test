@@ -1,0 +1,15 @@
+{
+  "name": "crescent",
+  "type": "module",
+  "version": "1.0.0",
+  "files": [
+    "crescent_bg.wasm",
+    "crescent.js",
+    "crescent.d.ts"
+  ],
+  "main": "crescent.js",
+  "types": "crescent.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
