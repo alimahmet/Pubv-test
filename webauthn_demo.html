@@ -38,8 +38,9 @@ td, th { padding:4px 6px; border-bottom:1px solid var(--card); text-align:left; 
 
 <div class="row">
   <button class="secondary" onclick="newNonce()">New random nonce</button>
-  <button class="secondary" onclick="reg(false)">Register passkey</button>
-  <button class="secondary" onclick="reg(true)">Register security key (attestation)</button>
+  <button class="secondary" onclick="reg(false, false)">Register passkey</button>
+  <button class="secondary" onclick="reg(false, true)">Register passkey (attestation)</button>
+  <button class="secondary" onclick="reg(true, true)">Register security key (attestation)</button>
 </div>
 
 <div class="row">
@@ -99,7 +100,54 @@ function derToRaw(der) {
   return [fix(r), fix(s)];
 }
 
-async function reg(securityKey) {
+// Minimal CBOR decoder, enough for an attestationObject: ints, byte and text strings,
+// arrays, maps, and simple values. Byte strings come back as Uint8Array.
+function cborDecode(bytes) {
+  let p = 0;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  function arg(info) {
+    if (info < 24) return info;
+    if (info === 24) return bytes[p++];
+    if (info === 25) { const v = dv.getUint16(p); p += 2; return v; }
+    if (info === 26) { const v = dv.getUint32(p); p += 4; return v; }
+    if (info === 27) { const v = Number(dv.getBigUint64(p)); p += 8; return v; }
+    throw new Error('CBOR: unsupported length encoding ' + info);
+  }
+  function item() {
+    const b = bytes[p++], major = b >> 5, info = b & 31;
+    if (major === 7) {
+      if (info === 20) return false;
+      if (info === 21) return true;
+      if (info === 22) return null;
+      throw new Error('CBOR: unsupported simple/float value ' + info);
+    }
+    const n = arg(info);
+    switch (major) {
+      case 0: return n;
+      case 1: return -1 - n;
+      case 2: { const v = bytes.slice(p, p + n); p += n; return v; }
+      case 3: { const v = new TextDecoder().decode(bytes.slice(p, p + n)); p += n; return v; }
+      case 4: { const a = []; for (let i = 0; i < n; i++) a.push(item()); return a; }
+      case 5: { const m = {}; for (let i = 0; i < n; i++) { const k = item(); m[k] = item(); } return m; }
+      default: throw new Error('CBOR: unsupported major type ' + major);
+    }
+  }
+  return item();
+}
+
+// authData = rpIdHash(32) | flags(1) | signCount(4) | [aaguid(16) | credIdLen(2) | credId | COSE key]
+function parseAuthData(ad) {
+  const f = ad[32];
+  const out = { flags: '0x' + f.toString(16).padStart(2, '0'), UP: !!(f & 1), UV: !!(f & 4), BE: !!(f & 8), BS: !!(f & 16),
+                AT: !!(f & 64), signCount: new DataView(ad.buffer, ad.byteOffset).getUint32(33) };
+  if (out.AT && ad.length >= 55) {
+    const g = hex(ad.slice(37, 53));
+    out.aaguid = `${g.slice(0, 8)}-${g.slice(8, 12)}-${g.slice(12, 16)}-${g.slice(16, 20)}-${g.slice(20)}`;
+  }
+  return out;
+}
+
+async function reg(securityKey, attest) {
   try {
     const c = await navigator.credentials.create({ publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -107,14 +155,20 @@ async function reg(securityKey) {
       user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'askar', displayName: 'Askar' },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       authenticatorSelection: { authenticatorAttachment: securityKey ? 'cross-platform' : 'platform', userVerification: 'required', residentKey: 'preferred' },
-      attestation: securityKey ? 'direct' : 'none'
+      attestation: attest ? 'direct' : 'none'
     }});
     const spki = new Uint8Array(c.response.getPublicKey());
     const xy = spki.slice(-64);
-    let flags = null;
-    try { const ad = new Uint8Array(c.response.getAuthenticatorData()); flags = '0x' + ad[32].toString(16).padStart(2, '0'); } catch (e) {}
+    let att;
+    try {
+      const ao = cborDecode(new Uint8Array(c.response.attestationObject));
+      const ad = parseAuthData(ao.authData);
+      att = { requested: attest ? 'direct' : 'none', fmt: ao.fmt, attStmtKeys: Object.keys(ao.attStmt || {}),
+              x5cCount: Array.isArray(ao.attStmt && ao.attStmt.x5c) ? ao.attStmt.x5c.length : 0,
+              aaguid: ad.aaguid, flags: ad.flags, UP: ad.UP, UV: ad.UV, BE: ad.BE, BS: ad.BS, signCount: ad.signCount };
+    } catch (e) { att = { error: 'could not decode attestationObject: ' + e.message }; }
     const out = { kind: 'registration', credId: b64u(c.rawId), pub_x: hex(xy.slice(0, 32)), pub_y: hex(xy.slice(32)),
-                  flags, attestationObject: hex(c.response.attestationObject), origin: location.origin, userAgent: navigator.userAgent };
+                  attestation: att, attestationObject: hex(c.response.attestationObject), origin: location.origin, userAgent: navigator.userAgent };
     try { localStorage.setItem('pbuv_cred', out.credId); } catch (e) {}
     last = out;
     show(JSON.stringify(out, null, 2));
