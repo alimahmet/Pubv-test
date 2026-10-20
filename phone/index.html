@@ -51,6 +51,7 @@ textarea { width:100%; box-sizing:border-box; height:8em; font:12px ui-monospace
 <div class="row">
   <button class="secondary" onclick="copyProof()">Copy proof</button>
   <button class="secondary" onclick="copyAssertion()">Copy assertion JSON</button>
+  <button class="secondary" onclick="copyRegistration()">Copy registration</button>
 </div>
 
 <h2>Status</h2>
@@ -75,7 +76,7 @@ const dataFile = dataParam ? 'pbuv_data_' + dataParam + '.json' : 'pbuv_data.jso
 const dataParamOk = !dataParam || /^[A-Za-z0-9_-]+$/.test(dataParam);
 
 let worker = null, busy = false, loaded = false, lastError = null;
-let lastAssertion = null, lastProof = null, lastParams = null;
+let lastAssertion = null, lastProof = null, lastParams = null, lastRegistration = null;
 
 function status(text, bad) { $('status').textContent = text; $('status').className = bad ? 'bad' : ''; }
 function show(text) { $('o').textContent = text; }
@@ -163,7 +164,8 @@ async function reg() {
     const out = { kind: 'registration', credId: b64u(c.rawId), pub_x: hex(xy.slice(0, 32)), pub_y: hex(xy.slice(32)), origin: location.origin };
     try { localStorage.setItem('pbuv_cred', out.credId); } catch (e) {}
     status('Registered. Issue a credential for this key (PBUV.md), export it, and reload.');
-    show(JSON.stringify(out, null, 2));
+    lastRegistration = JSON.stringify(out, null, 2);
+    show(lastRegistration);
   } catch (e) { status('Error: ' + e.name + ': ' + e.message, true); }
 }
 
@@ -201,13 +203,14 @@ function repeat() {
 }
 
 // iOS may refuse the clipboard; then the text is put in a box to select and copy by hand
-async function copy(text, what) {
-  if (!text) { status('Nothing to copy yet: run Face ID + prove + verify first.', true); return; }
+async function copy(text, what, missing = 'run Face ID + prove + verify first') {
+  if (!text) { status('Nothing to copy yet: ' + missing + '.', true); return; }
   try { await navigator.clipboard.writeText(text); status(what + ' copied (' + text.length + ' characters).'); $('copybox').hidden = true; }
   catch (e) { $('copybox').value = text; $('copybox').hidden = false; $('copybox').select(); status('Clipboard refused; select the text in the box and copy it.', true); }
 }
 function copyProof() { copy(lastProof, 'Proof'); }
 function copyAssertion() { copy(lastAssertion, 'Assertion JSON'); }
+function copyRegistration() { copy(lastRegistration, 'Registration', 'press Register passkey first'); }
 
 $('env').textContent = 'origin: ' + location.origin + '  |  rpId: ' + location.hostname + (window.isSecureContext ? '' : '  |  NOT a secure context, WebAuthn will fail');
 showCtx();
