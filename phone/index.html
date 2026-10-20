@@ -69,7 +69,12 @@ const sha = async d => new Uint8Array(await crypto.subtle.digest('SHA-256', d));
 // unpadded base64url length to byte length
 const b64uBytes = s => Math.floor(s.length * 3 / 4);
 
-let worker = null, busy = false, loaded = false;
+// ?data=<name> loads pbuv_data_<name>.json, so one deployment can hold data for several devices
+const dataParam = new URLSearchParams(location.search).get('data');
+const dataFile = dataParam ? 'pbuv_data_' + dataParam + '.json' : 'pbuv_data.json';
+const dataParamOk = !dataParam || /^[A-Za-z0-9_-]+$/.test(dataParam);
+
+let worker = null, busy = false, loaded = false, lastError = null;
 let lastAssertion = null, lastProof = null, lastParams = null;
 
 function status(text, bad) { $('status').textContent = text; $('status').className = bad ? 'bad' : ''; }
@@ -87,16 +92,24 @@ function startWorker() {
   loaded = false; setBusy(false);
   worker = new Worker('./worker.js', { type: 'module' });
   worker.onmessage = ev => onWorker(ev.data);
-  worker.onerror = ev => { status('Worker error: ' + (ev.message || 'unknown') + ' (the wasm module may have aborted; it is reloaded)', true); ev.preventDefault(); restart(); };
-  worker.postMessage({ cmd: 'load' });
+  worker.onerror = ev => { ev.preventDefault(); failed('Worker error: ' + (ev.message || 'unknown')); };
+  worker.postMessage({ cmd: 'load', file: dataFile });
 }
 function restart() { try { worker.terminate(); } catch (e) {} startWorker(); }
+// A load error (missing data or wasm) would only repeat, so the worker is not restarted then.
+function failed(text) {
+  setBusy(false);
+  if (loaded) { lastError = text; status(text + ' (reloading the wasm module...)', true); restart(); }
+  else { status(text + ' (fix this and reload the page)', true); }
+}
 
 function onWorker(m) {
   if (m.type === 'loaded') {
     loaded = true; setBusy(false);
-    $('loadinfo').textContent = `data: ${m.name}  |  wasm: ${m.wasmBytes} bytes`;
-    status('Ready.');
+    $('loadinfo').textContent = `data: ${m.name} (${m.file})  |  wasm: ${m.wasmBytes} bytes`;
+    // keep an error that caused the reload visible
+    status(lastError ? lastError + ' (wasm module reloaded, ready)' : 'Ready.', !!lastError);
+    lastError = null;
   } else if (m.type === 'progress') {
     status(m.text);
   } else if (m.type === 'once') {
@@ -116,8 +129,7 @@ function onWorker(m) {
           `verify succeeded: ${ok} of ${m.runs.length}`,
           '', navigator.userAgent].join('\n'));
   } else if (m.type === 'error') {
-    status('Error: ' + m.text, true); setBusy(false);
-    restart();
+    failed('Error: ' + m.text);
   }
 }
 
@@ -199,7 +211,8 @@ function copyAssertion() { copy(lastAssertion, 'Assertion JSON'); }
 
 $('env').textContent = 'origin: ' + location.origin + '  |  rpId: ' + location.hostname + (window.isSecureContext ? '' : '  |  NOT a secure context, WebAuthn will fail');
 showCtx();
-startWorker();
+if (dataParamOk) startWorker();
+else { $('loadinfo').textContent = 'Invalid ?data= value'; status('Error: ?data= may only contain letters, digits, - and _', true); }
 </script>
 </body>
 </html>

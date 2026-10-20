@@ -27,11 +27,11 @@ self.onmessage = async (ev) => {
     if (m.cmd === 'load') {
       const [wasm, d] = await Promise.all([
         fetch('./pkg/crescent_bg.wasm').then(r => { if (!r.ok) throw new Error('pkg/crescent_bg.wasm: HTTP ' + r.status); return r.arrayBuffer(); }),
-        fetch('./pbuv_data.json').then(r => { if (!r.ok) throw new Error('pbuv_data.json: HTTP ' + r.status); return r.json(); }),
+        fetch('./' + m.file).then(r => { if (!r.ok) throw new Error(m.file + ': HTTP ' + r.status); return r.json(); }),
       ]);
       await init({ module_or_path: wasm });
       data = d;
-      postMessage({ type: 'loaded', name: d.name, wasmBytes: wasm.byteLength });
+      postMessage({ type: 'loaded', name: d.name, file: m.file, wasmBytes: wasm.byteLength });
     } else if (m.cmd === 'once') {
       postMessage({ type: 'progress', text: 'Proving...' });
       postMessage({ type: 'once', ...proveVerify(m.assertion, m.params) });
