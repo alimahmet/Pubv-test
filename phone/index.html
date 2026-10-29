@@ -21,6 +21,7 @@ pre { background:var(--card); padding:12px; border-radius:8px; white-space:pre-w
 .small { font-family:ui-monospace, monospace; font-size:12px; word-break:break-all; color:var(--muted); }
 #status { font-weight:600; }
 #status.bad { color:var(--bad); }
+#counterwarn { margin:8px 0; padding:10px; border-radius:8px; border:2px solid var(--bad); color:var(--bad); font-weight:700; }
 textarea { width:100%; box-sizing:border-box; height:8em; font:12px ui-monospace, monospace; border-radius:8px; background:var(--card); color:var(--fg); border:0; padding:8px; }
 </style>
 </head>
@@ -29,6 +30,7 @@ textarea { width:100%; box-sizing:border-box; height:8em; font:12px ui-monospace
 <h1>PBUV phone measurement</h1>
 <div class="small" id="env"></div>
 <div class="small" id="loadinfo">Loading wasm and data...</div>
+<div id="counterwarn" hidden>counter rule off (experiment): signCount is not checked, only for speed tests (?allowcounter=1)</div>
 
 <label for="n">Nonce (from the verifier)</label>
 <input id="n" value="nonce-P">
@@ -74,6 +76,9 @@ const b64uBytes = s => Math.floor(s.length * 3 / 4);
 const dataParam = new URLSearchParams(location.search).get('data');
 const dataFile = dataParam ? 'pbuv_data_' + dataParam + '.json' : 'pbuv_data.json';
 const dataParamOk = !dataParam || /^[A-Za-z0-9_-]+$/.test(dataParam);
+// ?allowcounter=1 turns the signCount rule off, only for speed tests with Windows Hello
+const allowCounter = new URLSearchParams(location.search).get('allowcounter') === '1';
+$('counterwarn').hidden = !allowCounter;
 
 let worker = null, busy = false, loaded = false, lastError = null;
 let lastAssertion = null, lastProof = null, lastParams = null, lastRegistration = null;
@@ -116,7 +121,8 @@ function onWorker(m) {
   } else if (m.type === 'once') {
     lastProof = m.proof; setBusy(false);
     const res = { faceIdMs: +lastParams.faceIdMs.toFixed(1), proveMs: +m.proveMs.toFixed(1), verifyMs: +m.verifyMs.toFixed(1),
-                  proofBytes: b64uBytes(m.proof), verified: m.ok, result: m.result, uv: lastParams.uv, flags: lastParams.flags, nonce: lastParams.nonce };
+                  proofBytes: b64uBytes(m.proof), verified: m.ok, result: m.result, uv: lastParams.uv, flags: lastParams.flags, signCount: lastParams.signCount,
+                  nonce: lastParams.nonce, counterRule: allowCounter ? 'off (experiment)' : 'on' };
     status(m.ok ? 'Verified.' : 'Verify failed.', !m.ok);
     show(JSON.stringify(res, null, 2));
   } else if (m.type === 'repeat') {
@@ -128,6 +134,7 @@ function onWorker(m) {
           'verify ms:   ' + stats(m.runs.map(r => r.verifyMs)),
           'proof bytes: ' + stats(m.runs.map(r => r.bytes)),
           `verify succeeded: ${ok} of ${m.runs.length}`,
+          'counter rule: ' + (allowCounter ? 'off (experiment)' : 'on'),
           '', navigator.userAgent].join('\n'));
   } else if (m.type === 'error') {
     failed('Error: ' + m.text);
@@ -244,7 +251,8 @@ async function once() {
     lastAssertion = JSON.stringify({ authData: hex(ad), clientDataJSON: new TextDecoder().decode(cd), r: hex(r), s: hex(s),
                                      meta: { nonce: $('n').value, verifier: $('v').value, request: $('r').value, credId: b64u(a.rawId), origin: location.origin } });
     lastParams = { nonce: $('n').value, verifier: $('v').value, request: $('r').value, rpId: location.hostname, origin: location.origin,
-                   faceIdMs, uv: !!(ad[32] & 4), flags: '0x' + ad[32].toString(16).padStart(2, '0') };
+                   faceIdMs, uv: !!(ad[32] & 4), flags: '0x' + ad[32].toString(16).padStart(2, '0'),
+                   signCount: new DataView(ad.buffer, ad.byteOffset).getUint32(33), allowCounter };
     status(`Face ID done in ${faceIdMs.toFixed(0)} ms. Proving...`);
     worker.postMessage({ cmd: 'once', assertion: lastAssertion, params: lastParams });
   } catch (e) {

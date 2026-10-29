@@ -99,9 +99,10 @@ export function pbuv_show_wasm(client_state_b64url, range_pk_b64url, io_location
  * @param {string} request
  * @param {string} rp_id
  * @param {string} origin
+ * @param {boolean} allow_counter
  * @returns {string}
  */
-export function pbuv_verify_wasm(show_proof_b64url, vk_b64url, pvk_b64url, range_vk_b64url, io_locations_str, issuer_pem, config_str, proof_spec_json, webauthn_json, nonce, verifier_id, request, rp_id, origin) {
+export function pbuv_verify_wasm(show_proof_b64url, vk_b64url, pvk_b64url, range_vk_b64url, io_locations_str, issuer_pem, config_str, proof_spec_json, webauthn_json, nonce, verifier_id, request, rp_id, origin, allow_counter) {
     let deferred16_0;
     let deferred16_1;
     try {
@@ -133,7 +134,7 @@ export function pbuv_verify_wasm(show_proof_b64url, vk_b64url, pvk_b64url, range
         const len12 = WASM_VECTOR_LEN;
         const ptr13 = passStringToWasm0(origin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len13 = WASM_VECTOR_LEN;
-        const ret = wasm.pbuv_verify_wasm(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, ptr8, len8, ptr9, len9, ptr10, len10, ptr11, len11, ptr12, len12, ptr13, len13);
+        const ret = wasm.pbuv_verify_wasm(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, ptr8, len8, ptr9, len9, ptr10, len10, ptr11, len11, ptr12, len12, ptr13, len13, allow_counter);
         var ptr15 = ret[0];
         var len15 = ret[1];
         if (ret[3]) {

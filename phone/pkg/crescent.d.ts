@@ -7,7 +7,7 @@ export function main(): void;
 
 export function pbuv_show_wasm(client_state_b64url: string, range_pk_b64url: string, io_locations_str: string, proof_spec_json: string, webauthn_json: string): string;
 
-export function pbuv_verify_wasm(show_proof_b64url: string, vk_b64url: string, pvk_b64url: string, range_vk_b64url: string, io_locations_str: string, issuer_pem: string, config_str: string, proof_spec_json: string, webauthn_json: string, nonce: string, verifier_id: string, request: string, rp_id: string, origin: string): string;
+export function pbuv_verify_wasm(show_proof_b64url: string, vk_b64url: string, pvk_b64url: string, range_vk_b64url: string, io_locations_str: string, issuer_pem: string, config_str: string, proof_spec_json: string, webauthn_json: string, nonce: string, verifier_id: string, request: string, rp_id: string, origin: string, allow_counter: boolean): string;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -16,7 +16,7 @@ export interface InitOutput {
     readonly create_show_proof_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number, number];
     readonly main: () => void;
     readonly pbuv_show_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-    readonly pbuv_verify_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number) => [number, number, number, number];
+    readonly pbuv_verify_wasm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number, a1: number, b1: number, c1: number) => [number, number, number, number];
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;

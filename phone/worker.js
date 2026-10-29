@@ -14,7 +14,7 @@ function proveVerify(a, p) {
   let ok = false, result;
   try {
     result = pbuv_verify_wasm(proof, data.groth16_vk, data.groth16_pvk, data.range_vk, data.io_locations,
-      data.issuer_pem, data.config, data.proof_spec, a, p.nonce, p.verifier, p.request, p.rpId, p.origin);
+      data.issuer_pem, data.config, data.proof_spec, a, p.nonce, p.verifier, p.request, p.rpId, p.origin, p.allowCounter === true);
     ok = true;
   } catch (e) { result = String(e); }
   const t2 = performance.now();
