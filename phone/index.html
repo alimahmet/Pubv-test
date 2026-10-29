@@ -225,7 +225,9 @@ async function reg() {
               aaguid: ad.aaguid, flags: ad.flags, UP: ad.UP, UV: ad.UV, BE: ad.BE, BS: ad.BS, signCount: ad.signCount };
     } catch (e) { att = { error: 'could not decode attestationObject: ' + e.message }; }
     const out = { kind: 'registration', credId: b64u(c.rawId), pub_x: hex(xy.slice(0, 32)), pub_y: hex(xy.slice(32)),
-                  attestation: att, attestationObject: hex(c.response.attestationObject), origin: location.origin, userAgent: navigator.userAgent };
+                  attestation: att, attestationObject: hex(c.response.attestationObject),
+                  // issuer_check.py needs it to check a TPM attestation's extraData
+                  clientDataJSON: new TextDecoder().decode(c.response.clientDataJSON), origin: location.origin, userAgent: navigator.userAgent };
     try { localStorage.setItem('pbuv_cred', out.credId); } catch (e) {}
     status('Registered. Issue a credential for this key (PBUV.md), export it, and reload.');
     lastRegistration = JSON.stringify(out, null, 2);
